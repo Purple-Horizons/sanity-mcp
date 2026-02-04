@@ -5,9 +5,10 @@ An MCP (Model Context Protocol) server for Sanity CMS, enabling AI agents to que
 ## Features
 
 - **GROQ Query Execution**: Run any GROQ query against your Sanity dataset
-- **Document Operations**: Get documents by ID, list by type, search
+- **Document Operations**: Get, list, search, create, update, patch, delete
 - **Schema Discovery**: Explore document types and their fields
 - **Full-text Search**: Search across titles, descriptions, and content
+- **Draft/Publish Workflow**: Publish drafts and unpublish documents
 - **Pagination Support**: Handle large datasets efficiently
 - **CDN Support**: Automatic CDN usage for public datasets
 
@@ -64,7 +65,9 @@ Add to your MCP settings (e.g., Claude Desktop config):
 
 ## Available Tools
 
-### `sanity_query`
+### Read Operations
+
+#### `sanity_query`
 
 Execute any GROQ query against the Sanity Content Lake.
 
@@ -72,7 +75,7 @@ Execute any GROQ query against the Sanity Content Lake.
 Query: *[_type == "post" && publishedAt < now()] | order(publishedAt desc) [0...10]
 ```
 
-### `sanity_get_document`
+#### `sanity_get_document`
 
 Fetch a single document by ID.
 
@@ -80,7 +83,7 @@ Fetch a single document by ID.
 ID: post-abc123
 ```
 
-### `sanity_list_documents`
+#### `sanity_list_documents`
 
 List documents of a specific type with pagination.
 
@@ -91,7 +94,7 @@ Offset: 0
 Order: _createdAt desc
 ```
 
-### `sanity_search`
+#### `sanity_search`
 
 Full-text search across document content.
 
@@ -101,11 +104,11 @@ Types: ["post", "service"]
 Limit: 10
 ```
 
-### `sanity_get_types`
+#### `sanity_get_types`
 
 Discover all document types in the dataset.
 
-### `sanity_get_type_info`
+#### `sanity_get_type_info`
 
 Get field names and document count for a type.
 
@@ -113,13 +116,89 @@ Get field names and document count for a type.
 Type: post
 ```
 
-### `sanity_count`
+#### `sanity_count`
 
 Count documents matching a GROQ filter.
 
 ```
 Filter: *[_type == "post" && featured == true]
 ```
+
+### Write Operations
+
+> **Note:** Write operations require a `SANITY_TOKEN` with write permissions.
+
+#### `sanity_create`
+
+Create a new document.
+
+```json
+{
+  "_type": "post",
+  "document": {
+    "title": "My New Post",
+    "slug": { "current": "my-new-post" },
+    "body": "Content here..."
+  }
+}
+```
+
+#### `sanity_update`
+
+Replace an entire document by ID.
+
+```json
+{
+  "id": "post-abc123",
+  "document": {
+    "_type": "post",
+    "title": "Updated Title",
+    "slug": { "current": "updated-slug" }
+  }
+}
+```
+
+#### `sanity_patch`
+
+Partially update a document.
+
+```json
+{
+  "id": "post-abc123",
+  "set": { "title": "New Title", "featured": true },
+  "unset": ["deprecatedField"],
+  "inc": { "viewCount": 1 }
+}
+```
+
+#### `sanity_delete`
+
+Delete a document by ID.
+
+```json
+{
+  "id": "post-abc123"
+}
+```
+
+#### `sanity_publish`
+
+Publish a draft document (moves from `drafts.*` to published).
+
+```json
+{
+  "id": "drafts.post-abc123"
+}
+```
+
+#### `sanity_unpublish`
+
+Unpublish a document (moves to `drafts.*`).
+
+```json
+{
+  "id": "post-abc123"
+}
 
 ## GROQ Query Examples
 

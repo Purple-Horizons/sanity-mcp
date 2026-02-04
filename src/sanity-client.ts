@@ -26,6 +26,23 @@ export interface SanityDocument {
   [key: string]: unknown;
 }
 
+export interface MutationResult {
+  transactionId: string;
+  results: Array<{
+    id: string;
+    operation: string;
+  }>;
+}
+
+export interface AssetDocument {
+  _id: string;
+  _type: 'sanity.imageAsset' | 'sanity.fileAsset';
+  url: string;
+  originalFilename?: string;
+  mimeType?: string;
+  size?: number;
+}
+
 export class SanityClient {
   private projectId: string;
   private dataset: string;
@@ -217,6 +234,224 @@ export class SanityClient {
       fields,
       count: countResult.result,
     };
+  }
+
+  /**
+   * Get the mutations API URL (always uses api, never cdn)
+   */
+  private get mutateUrl(): string {
+    return `https://${this.projectId}.api.sanity.io/v${this.apiVersion}/data/mutate/${this.dataset}`;
+  }
+
+  /**
+   * Get the assets API URL
+   */
+  private get assetsUrl(): string {
+    return `https://${this.projectId}.api.sanity.io/v${this.apiVersion}/assets/images/${this.dataset}`;
+  }
+
+  /**
+   * Execute mutations against the Sanity Content Lake
+   */
+  private async mutate(
+    mutations: Array<Record<string, unknown>>,
+    options?: { returnDocuments?: boolean }
+  ): Promise<MutationResult> {
+    if (!this.token) {
+      throw new Error('Write operations require a Sanity API token');
+    }
+
+    const response = await fetch(this.mutateUrl, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        mutations,
+        returnDocuments: options?.returnDocuments ?? false,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Sanity mutation failed: ${response.status} - ${error}`);
+    }
+
+    return response.json() as Promise<MutationResult>;
+  }
+
+  /**
+   * Create a new document
+   */
+  async createDocument<T extends Omit<SanityDocument, '_id' | '_rev' | '_createdAt' | '_updatedAt'>>(
+    document: T & { _type: string; _id?: string }
+  ): Promise<MutationResult> {
+    const mutation = document._id
+      ? { createOrReplace: document }
+      : { create: document };
+    
+    return this.mutate([mutation]);
+  }
+
+  /**
+   * Update an existing document (replaces the entire document)
+   */
+  async updateDocument(
+    id: string,
+    document: Record<string, unknown>
+  ): Promise<MutationResult> {
+    return this.mutate([
+      {
+        createOrReplace: {
+          _id: id,
+          ...document,
+        },
+      },
+    ]);
+  }
+
+  /**
+   * Patch a document (partial update)
+   */
+  async patchDocument(
+    id: string,
+    patches: {
+      set?: Record<string, unknown>;
+      unset?: string[];
+      inc?: Record<string, number>;
+      dec?: Record<string, number>;
+      insert?: {
+        before?: string;
+        after?: string;
+        replace?: string;
+        items: unknown[];
+      };
+    }
+  ): Promise<MutationResult> {
+    return this.mutate([
+      {
+        patch: {
+          id,
+          ...patches,
+        },
+      },
+    ]);
+  }
+
+  /**
+   * Delete a document
+   */
+  async deleteDocument(id: string): Promise<MutationResult> {
+    return this.mutate([{ delete: { id } }]);
+  }
+
+  /**
+   * Upload an image asset
+   */
+  async uploadImage(
+    imageBuffer: Buffer,
+    filename: string,
+    contentType: string = 'image/jpeg'
+  ): Promise<AssetDocument> {
+    if (!this.token) {
+      throw new Error('Image upload requires a Sanity API token');
+    }
+
+    const url = `${this.assetsUrl}?filename=${encodeURIComponent(filename)}`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': contentType,
+        'Authorization': `Bearer ${this.token}`,
+      },
+      body: imageBuffer,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Image upload failed: ${response.status} - ${error}`);
+    }
+
+    const result = await response.json() as { document: AssetDocument };
+    return result.document;
+  }
+
+  /**
+   * Create an image reference from an asset ID
+   */
+  createImageReference(assetId: string): { _type: 'image'; asset: { _type: 'reference'; _ref: string } } {
+    return {
+      _type: 'image',
+      asset: {
+        _type: 'reference',
+        _ref: assetId,
+      },
+    };
+  }
+
+  /**
+   * Publish a draft document (remove drafts. prefix)
+   */
+  async publishDocument(draftId: string): Promise<MutationResult> {
+    // Get the draft document
+    const draft = await this.getDocument(draftId);
+    if (!draft) {
+      throw new Error(`Draft document not found: ${draftId}`);
+    }
+
+    // Determine the published ID
+    const publishedId = draftId.startsWith('drafts.')
+      ? draftId.replace('drafts.', '')
+      : draftId;
+
+    // Create the published version and delete the draft
+    const { _id, _rev, ...documentData } = draft;
+    
+    return this.mutate([
+      {
+        createOrReplace: {
+          _id: publishedId,
+          ...documentData,
+        },
+      },
+      {
+        delete: {
+          id: draftId,
+        },
+      },
+    ]);
+  }
+
+  /**
+   * Unpublish a document (move to drafts)
+   */
+  async unpublishDocument(publishedId: string): Promise<MutationResult> {
+    // Get the published document
+    const published = await this.getDocument(publishedId);
+    if (!published) {
+      throw new Error(`Published document not found: ${publishedId}`);
+    }
+
+    // Determine the draft ID
+    const draftId = publishedId.startsWith('drafts.')
+      ? publishedId
+      : `drafts.${publishedId}`;
+
+    // Create the draft version and delete the published
+    const { _id, _rev, ...documentData } = published;
+    
+    return this.mutate([
+      {
+        createOrReplace: {
+          _id: draftId,
+          ...documentData,
+        },
+      },
+      {
+        delete: {
+          id: publishedId,
+        },
+      },
+    ]);
   }
 }
 

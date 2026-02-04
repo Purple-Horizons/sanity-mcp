@@ -139,6 +139,125 @@ const TOOLS: Tool[] = [
       required: ['filter'],
     },
   },
+  // Write operations (require API token)
+  {
+    name: 'sanity_create',
+    description: 'Create a new document in Sanity CMS. Requires write token.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        _type: {
+          type: 'string',
+          description: 'The document type (e.g., "post", "author")',
+        },
+        _id: {
+          type: 'string',
+          description: 'Optional: Custom document ID. If not provided, Sanity generates one.',
+        },
+        document: {
+          type: 'object',
+          description: 'The document data (all fields except _type and _id)',
+          additionalProperties: true,
+        },
+      },
+      required: ['_type', 'document'],
+    },
+  },
+  {
+    name: 'sanity_update',
+    description: 'Replace an entire document. Requires write token.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The document ID to update',
+        },
+        document: {
+          type: 'object',
+          description: 'The complete document data (will replace existing)',
+          additionalProperties: true,
+        },
+      },
+      required: ['id', 'document'],
+    },
+  },
+  {
+    name: 'sanity_patch',
+    description: 'Partially update a document. Requires write token.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The document ID to patch',
+        },
+        set: {
+          type: 'object',
+          description: 'Fields to set or update',
+          additionalProperties: true,
+        },
+        unset: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Field names to remove',
+        },
+        inc: {
+          type: 'object',
+          description: 'Numeric fields to increment',
+          additionalProperties: { type: 'number' },
+        },
+        dec: {
+          type: 'object',
+          description: 'Numeric fields to decrement',
+          additionalProperties: { type: 'number' },
+        },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'sanity_delete',
+    description: 'Delete a document. Requires write token.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The document ID to delete',
+        },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'sanity_publish',
+    description: 'Publish a draft document (moves from drafts.* to published). Requires write token.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The draft document ID (with or without "drafts." prefix)',
+        },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'sanity_unpublish',
+    description: 'Unpublish a document (moves to drafts.*). Requires write token.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The published document ID',
+        },
+      },
+      required: ['id'],
+    },
+  },
 ];
 
 class SanityMCPServer {
@@ -200,6 +319,36 @@ class SanityMCPServer {
             return await this.handleCount(
               args as { filter: string; params?: Record<string, unknown> }
             );
+
+          case 'sanity_create':
+            return await this.handleCreate(
+              args as { _type: string; _id?: string; document: Record<string, unknown> }
+            );
+
+          case 'sanity_update':
+            return await this.handleUpdate(
+              args as { id: string; document: Record<string, unknown> }
+            );
+
+          case 'sanity_patch':
+            return await this.handlePatch(
+              args as {
+                id: string;
+                set?: Record<string, unknown>;
+                unset?: string[];
+                inc?: Record<string, number>;
+                dec?: Record<string, number>;
+              }
+            );
+
+          case 'sanity_delete':
+            return await this.handleDelete(args as { id: string });
+
+          case 'sanity_publish':
+            return await this.handlePublish(args as { id: string });
+
+          case 'sanity_unpublish':
+            return await this.handleUnpublish(args as { id: string });
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -329,6 +478,155 @@ class SanityMCPServer {
         {
           type: 'text',
           text: JSON.stringify({ filter: args.filter, count }, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleCreate(args: {
+    _type: string;
+    _id?: string;
+    document: Record<string, unknown>;
+  }) {
+    const doc = {
+      _type: args._type,
+      ...(args._id && { _id: args._id }),
+      ...args.document,
+    };
+    const result = await this.client.createDocument(doc);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              transactionId: result.transactionId,
+              created: result.results,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+
+  private async handleUpdate(args: { id: string; document: Record<string, unknown> }) {
+    const result = await this.client.updateDocument(args.id, args.document);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              transactionId: result.transactionId,
+              updated: result.results,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+
+  private async handlePatch(args: {
+    id: string;
+    set?: Record<string, unknown>;
+    unset?: string[];
+    inc?: Record<string, number>;
+    dec?: Record<string, number>;
+  }) {
+    const patches: {
+      set?: Record<string, unknown>;
+      unset?: string[];
+      inc?: Record<string, number>;
+      dec?: Record<string, number>;
+    } = {};
+    
+    if (args.set) patches.set = args.set;
+    if (args.unset) patches.unset = args.unset;
+    if (args.inc) patches.inc = args.inc;
+    if (args.dec) patches.dec = args.dec;
+
+    const result = await this.client.patchDocument(args.id, patches);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              transactionId: result.transactionId,
+              patched: result.results,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+
+  private async handleDelete(args: { id: string }) {
+    const result = await this.client.deleteDocument(args.id);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              transactionId: result.transactionId,
+              deleted: result.results,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+
+  private async handlePublish(args: { id: string }) {
+    const draftId = args.id.startsWith('drafts.') ? args.id : `drafts.${args.id}`;
+    const result = await this.client.publishDocument(draftId);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              transactionId: result.transactionId,
+              published: result.results,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+
+  private async handleUnpublish(args: { id: string }) {
+    const publishedId = args.id.startsWith('drafts.') ? args.id.replace('drafts.', '') : args.id;
+    const result = await this.client.unpublishDocument(publishedId);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              transactionId: result.transactionId,
+              unpublished: result.results,
+            },
+            null,
+            2
+          ),
         },
       ],
     };

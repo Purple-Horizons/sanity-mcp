@@ -22,6 +22,21 @@ export interface SanityDocument {
     _updatedAt?: string;
     [key: string]: unknown;
 }
+export interface MutationResult {
+    transactionId: string;
+    results: Array<{
+        id: string;
+        operation: string;
+    }>;
+}
+export interface AssetDocument {
+    _id: string;
+    _type: 'sanity.imageAsset' | 'sanity.fileAsset';
+    url: string;
+    originalFilename?: string;
+    mimeType?: string;
+    size?: number;
+}
 export declare class SanityClient {
     private projectId;
     private dataset;
@@ -69,6 +84,70 @@ export declare class SanityClient {
         fields: string[];
         count: number;
     }>;
+    /**
+     * Get the mutations API URL (always uses api, never cdn)
+     */
+    private get mutateUrl();
+    /**
+     * Get the assets API URL
+     */
+    private get assetsUrl();
+    /**
+     * Execute mutations against the Sanity Content Lake
+     */
+    private mutate;
+    /**
+     * Create a new document
+     */
+    createDocument<T extends Omit<SanityDocument, '_id' | '_rev' | '_createdAt' | '_updatedAt'>>(document: T & {
+        _type: string;
+        _id?: string;
+    }): Promise<MutationResult>;
+    /**
+     * Update an existing document (replaces the entire document)
+     */
+    updateDocument(id: string, document: Record<string, unknown>): Promise<MutationResult>;
+    /**
+     * Patch a document (partial update)
+     */
+    patchDocument(id: string, patches: {
+        set?: Record<string, unknown>;
+        unset?: string[];
+        inc?: Record<string, number>;
+        dec?: Record<string, number>;
+        insert?: {
+            before?: string;
+            after?: string;
+            replace?: string;
+            items: unknown[];
+        };
+    }): Promise<MutationResult>;
+    /**
+     * Delete a document
+     */
+    deleteDocument(id: string): Promise<MutationResult>;
+    /**
+     * Upload an image asset
+     */
+    uploadImage(imageBuffer: Buffer, filename: string, contentType?: string): Promise<AssetDocument>;
+    /**
+     * Create an image reference from an asset ID
+     */
+    createImageReference(assetId: string): {
+        _type: 'image';
+        asset: {
+            _type: 'reference';
+            _ref: string;
+        };
+    };
+    /**
+     * Publish a draft document (remove drafts. prefix)
+     */
+    publishDocument(draftId: string): Promise<MutationResult>;
+    /**
+     * Unpublish a document (move to drafts)
+     */
+    unpublishDocument(publishedId: string): Promise<MutationResult>;
 }
 /**
  * Create a Sanity client from environment variables
