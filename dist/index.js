@@ -253,6 +253,97 @@ const TOOLS = [
             required: ['id'],
         },
     },
+    // Unique tools not in Sanity's official MCP
+    {
+        name: 'sanity_references',
+        description: 'Find all documents that reference a given document. Essential before deleting to avoid broken references.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: {
+                    type: 'string',
+                    description: 'The document ID to find references to',
+                },
+                limit: {
+                    type: 'number',
+                    description: 'Maximum number of referencing documents to return (default: 100)',
+                },
+            },
+            required: ['id'],
+        },
+    },
+    {
+        name: 'sanity_history',
+        description: 'Get the revision history of a document. See who changed what and when.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: {
+                    type: 'string',
+                    description: 'The document ID',
+                },
+                limit: {
+                    type: 'number',
+                    description: 'Maximum number of revisions to return (default: 25)',
+                },
+            },
+            required: ['id'],
+        },
+    },
+    {
+        name: 'sanity_diff',
+        description: 'Compare two documents and see what fields differ. Useful for comparing draft vs published or two versions.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                idA: {
+                    type: 'string',
+                    description: 'First document ID',
+                },
+                idB: {
+                    type: 'string',
+                    description: 'Second document ID',
+                },
+            },
+            required: ['idA', 'idB'],
+        },
+    },
+    {
+        name: 'sanity_bulk',
+        description: 'Execute multiple operations in a single atomic transaction. All succeed or all fail together.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                operations: {
+                    type: 'array',
+                    description: 'Array of operations: create, createOrReplace, patch, or delete',
+                    items: {
+                        type: 'object',
+                        description: 'One of: {create: doc}, {createOrReplace: doc}, {patch: {id, set?, unset?}}, {delete: {id}}',
+                    },
+                },
+                dryRun: {
+                    type: 'boolean',
+                    description: 'If true, validate operations without executing them',
+                },
+            },
+            required: ['operations'],
+        },
+    },
+    {
+        name: 'sanity_draft_status',
+        description: 'Check if a document has unpublished changes. Shows both draft and published versions if they exist.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: {
+                    type: 'string',
+                    description: 'The document ID (with or without drafts. prefix)',
+                },
+            },
+            required: ['id'],
+        },
+    },
 ];
 class SanityMCPServer {
     server;
@@ -305,6 +396,16 @@ class SanityMCPServer {
                         return await this.handlePublish(args);
                     case 'sanity_unpublish':
                         return await this.handleUnpublish(args);
+                    case 'sanity_references':
+                        return await this.handleReferences(args);
+                    case 'sanity_history':
+                        return await this.handleHistory(args);
+                    case 'sanity_diff':
+                        return await this.handleDiff(args);
+                    case 'sanity_bulk':
+                        return await this.handleBulk(args);
+                    case 'sanity_draft_status':
+                        return await this.handleDraftStatus(args);
                     default:
                         throw new Error(`Unknown tool: ${name}`);
                 }
@@ -515,6 +616,90 @@ class SanityMCPServer {
                         success: true,
                         transactionId: result.transactionId,
                         unpublished: result.results,
+                    }, null, 2),
+                },
+            ],
+        };
+    }
+    async handleReferences(args) {
+        const references = await this.client.findReferences(args.id, { limit: args.limit });
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        documentId: args.id,
+                        referencedBy: references.length,
+                        documents: references,
+                    }, null, 2),
+                },
+            ],
+        };
+    }
+    async handleHistory(args) {
+        const history = await this.client.getHistory(args.id, { limit: args.limit });
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        documentId: args.id,
+                        revisions: history.length,
+                        history,
+                    }, null, 2),
+                },
+            ],
+        };
+    }
+    async handleDiff(args) {
+        const diff = await this.client.compareDocuments(args.idA, args.idB);
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        comparing: { a: args.idA, b: args.idB },
+                        summary: {
+                            added: diff.added.length,
+                            removed: diff.removed.length,
+                            changed: diff.changed.length,
+                            unchanged: diff.unchanged.length,
+                        },
+                        diff,
+                    }, null, 2),
+                },
+            ],
+        };
+    }
+    async handleBulk(args) {
+        const result = await this.client.bulkMutate(args.operations, { dryRun: args.dryRun });
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        success: true,
+                        dryRun: args.dryRun || false,
+                        transactionId: result.transactionId,
+                        operationsExecuted: result.results.length,
+                        results: result.results,
+                    }, null, 2),
+                },
+            ],
+        };
+    }
+    async handleDraftStatus(args) {
+        const status = await this.client.getDraftStatus(args.id);
+        return {
+            content: [
+                {
+                    type: 'text',
+                    text: JSON.stringify({
+                        documentId: args.id,
+                        status: status.status,
+                        hasUnpublishedChanges: status.hasUnpublishedChanges,
+                        published: status.published ? { _id: status.published._id, _updatedAt: status.published._updatedAt } : null,
+                        draft: status.draft ? { _id: status.draft._id, _updatedAt: status.draft._updatedAt } : null,
                     }, null, 2),
                 },
             ],

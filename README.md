@@ -1,52 +1,45 @@
-# Sanity CMS MCP Server
+# 🔮 Sanity MCP Server
 
-An MCP (Model Context Protocol) server for Sanity CMS, enabling AI agents to query and interact with Sanity content using GROQ.
+**The self-hosted Sanity MCP that Sanity deprecated.** Full CRUD, atomic transactions, reference tracking, and tools the official server doesn't have.
 
-## Features
+[![npm version](https://img.shields.io/npm/v/@purple-horizons/sanity-mcp)](https://www.npmjs.com/package/@purple-horizons/sanity-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](https://opensource.org/licenses/MIT)
 
-- **GROQ Query Execution**: Run any GROQ query against your Sanity dataset
-- **Document Operations**: Get, list, search, create, update, patch, delete
-- **Schema Discovery**: Explore document types and their fields
-- **Full-text Search**: Search across titles, descriptions, and content
-- **Draft/Publish Workflow**: Publish drafts and unpublish documents
-- **Pagination Support**: Handle large datasets efficiently
-- **CDN Support**: Automatic CDN usage for public datasets
+---
 
-## Installation
+## Why This Exists
 
-```bash
-npm install @purple-horizons/sanity-mcp
-```
+Sanity's official MCP server (`@sanity/mcp-server`) is **archived**. They want you to use their hosted solution at `mcp.sanity.io` with OAuth.
 
-Or run directly:
+That's fine if you want:
+- OAuth flows for every AI tool
+- Dependency on Sanity's infrastructure
+- No offline or air-gapped usage
+- Whatever tools they decide to expose
+
+**This MCP gives you:**
+- 🔑 Simple token auth — one env var, done
+- 🏠 Self-hosted — runs anywhere, no external dependencies
+- 🛠️ More tools — reference tracking, diff, history, bulk ops
+- ⚡ Works offline — no OAuth dance, no hosted service required
+
+---
+
+## Quick Start
 
 ```bash
 npx @purple-horizons/sanity-mcp
 ```
 
-## Configuration
+Or install globally:
 
-Set the following environment variables:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `SANITY_PROJECT_ID` | Yes | Your Sanity project ID |
-| `SANITY_DATASET` | No | Dataset name (default: `production`) |
-| `SANITY_TOKEN` | No | API token for authenticated access |
-| `SANITY_API_VERSION` | No | API version (default: `2024-01-20`) |
-
-### Example `.env`
-
-```env
-SANITY_PROJECT_ID=your-project-id
-SANITY_DATASET=production
-SANITY_TOKEN=sk-your-token-here
-SANITY_API_VERSION=2024-01-20
+```bash
+npm install -g @purple-horizons/sanity-mcp
 ```
 
-## MCP Configuration
+### MCP Configuration
 
-Add to your MCP settings (e.g., Claude Desktop config):
+Add to your Claude Desktop, Cursor, or VS Code config:
 
 ```json
 {
@@ -56,211 +49,205 @@ Add to your MCP settings (e.g., Claude Desktop config):
       "args": ["@purple-horizons/sanity-mcp"],
       "env": {
         "SANITY_PROJECT_ID": "your-project-id",
-        "SANITY_DATASET": "production"
+        "SANITY_DATASET": "production",
+        "SANITY_TOKEN": "sk-your-token"
       }
     }
   }
 }
 ```
 
-## Available Tools
+---
 
-### Read Operations
+## Tools
 
-#### `sanity_query`
+### 📖 Read Operations
 
-Execute any GROQ query against the Sanity Content Lake.
+| Tool | Description |
+|------|-------------|
+| `sanity_query` | Execute any GROQ query |
+| `sanity_get_document` | Fetch a single document by ID |
+| `sanity_list_documents` | List documents by type with pagination |
+| `sanity_search` | Full-text search across content |
+| `sanity_get_types` | Discover all document types |
+| `sanity_get_type_info` | Get schema info for a type |
+| `sanity_count` | Count documents matching a filter |
 
-```
-Query: *[_type == "post" && publishedAt < now()] | order(publishedAt desc) [0...10]
-```
+### ✏️ Write Operations
 
-#### `sanity_get_document`
+| Tool | Description |
+|------|-------------|
+| `sanity_create` | Create a new document |
+| `sanity_update` | Replace an entire document |
+| `sanity_patch` | Partially update specific fields |
+| `sanity_delete` | Delete a document |
+| `sanity_publish` | Publish a draft |
+| `sanity_unpublish` | Move published to draft |
 
-Fetch a single document by ID.
+### 🚀 Unique Tools (Not in Sanity's Official MCP)
 
-```
-ID: post-abc123
-```
+| Tool | Description |
+|------|-------------|
+| `sanity_references` | **Find all documents referencing a given doc** — essential before deleting |
+| `sanity_diff` | **Compare two documents** — draft vs published, or any two docs |
+| `sanity_history` | **Get revision history** — see who changed what |
+| `sanity_bulk` | **Atomic batch operations** — all succeed or all fail |
+| `sanity_draft_status` | **Check publish state** — draft, published, or both |
 
-#### `sanity_list_documents`
+---
 
-List documents of a specific type with pagination.
+## What Makes This Better
 
-```
-Type: post
-Limit: 20
-Offset: 0
-Order: _createdAt desc
-```
+### 1. Reference Tracking
 
-#### `sanity_search`
-
-Full-text search across document content.
-
-```
-Search Term: AI consulting
-Types: ["post", "service"]
-Limit: 10
-```
-
-#### `sanity_get_types`
-
-Discover all document types in the dataset.
-
-#### `sanity_get_type_info`
-
-Get field names and document count for a type.
+Before you delete that image asset, you probably want to know what's using it:
 
 ```
-Type: post
+sanity_references id="image-abc123"
+→ Shows all 47 blog posts using that image
 ```
 
-#### `sanity_count`
+Sanity's official MCP doesn't have this. You'd find out the hard way.
 
-Count documents matching a GROQ filter.
+### 2. Document Diffing
+
+Content editor made changes. What changed?
 
 ```
-Filter: *[_type == "post" && featured == true]
+sanity_diff idA="drafts.post-xyz" idB="post-xyz"
+→ Shows exactly which fields differ
 ```
 
-### Write Operations
+See the diff before you publish. Or compare any two documents.
 
-> **Note:** Write operations require a `SANITY_TOKEN` with write permissions.
+### 3. Atomic Bulk Operations
 
-#### `sanity_create`
+Update 50 documents and they all need to succeed together? One transaction:
 
-Create a new document.
-
-```json
-{
-  "_type": "post",
-  "document": {
-    "title": "My New Post",
-    "slug": { "current": "my-new-post" },
-    "body": "Content here..."
-  }
-}
+```
+sanity_bulk operations=[
+  { "patch": { "id": "post-1", "set": { "featured": true }}},
+  { "patch": { "id": "post-2", "set": { "featured": false }}},
+  ...
+]
+→ All or nothing. No partial states.
 ```
 
-#### `sanity_update`
+With `dryRun: true`, validate before executing.
 
-Replace an entire document by ID.
+### 4. Draft Status at a Glance
 
-```json
-{
-  "id": "post-abc123",
-  "document": {
-    "_type": "post",
-    "title": "Updated Title",
-    "slug": { "current": "updated-slug" }
-  }
-}
+Is there a draft? Is it published? Both?
+
+```
+sanity_draft_status id="post-abc123"
+→ { status: "both", hasUnpublishedChanges: true }
 ```
 
-#### `sanity_patch`
+No more manually checking `drafts.{id}` vs `{id}`.
 
-Partially update a document.
+---
 
-```json
-{
-  "id": "post-abc123",
-  "set": { "title": "New Title", "featured": true },
-  "unset": ["deprecatedField"],
-  "inc": { "viewCount": 1 }
-}
-```
+## Environment Variables
 
-#### `sanity_delete`
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SANITY_PROJECT_ID` | ✅ | — | Your Sanity project ID |
+| `SANITY_DATASET` | ❌ | `production` | Dataset name |
+| `SANITY_TOKEN` | ❌ | — | API token (required for writes) |
+| `SANITY_API_VERSION` | ❌ | `2024-01-20` | API version |
 
-Delete a document by ID.
+### Getting Your Token
 
-```json
-{
-  "id": "post-abc123"
-}
-```
+1. Go to [sanity.io/manage](https://sanity.io/manage)
+2. Select your project → API → Tokens
+3. Add new token with Editor or higher permissions
+4. Copy and set as `SANITY_TOKEN`
 
-#### `sanity_publish`
+---
 
-Publish a draft document (moves from `drafts.*` to published).
-
-```json
-{
-  "id": "drafts.post-abc123"
-}
-```
-
-#### `sanity_unpublish`
-
-Unpublish a document (moves to `drafts.*`).
-
-```json
-{
-  "id": "post-abc123"
-}
-
-## GROQ Query Examples
+## GROQ Examples
 
 ```groq
-// Get all posts
-*[_type == "post"]
+// All posts, newest first
+*[_type == "post"] | order(_createdAt desc)
 
-// Get a specific post by slug
-*[_type == "post" && slug.current == "my-post"][0]
+// Specific post by slug
+*[_type == "post" && slug.current == "hello-world"][0]
 
-// Get posts with author expanded
+// Posts with expanded author
 *[_type == "post"]{
   title,
   slug,
-  "author": author->name
+  "author": author->name,
+  "category": category->title
 }
 
-// Count posts by category
+// Count by category
 {
   "total": count(*[_type == "post"]),
-  "featured": count(*[_type == "post" && featured == true])
+  "published": count(*[_type == "post" && !(_id in path("drafts.**"))])
 }
 
 // Full-text search
 *[_type == "post" && title match "AI*"]
 ```
 
+---
+
 ## Development
 
 ```bash
-# Install dependencies
-npm install
+# Clone
+git clone https://github.com/Purple-Horizons/sanity-mcp.git
+cd sanity-mcp
 
-# Run tests
-npm test
+# Install
+npm install
 
 # Build
 npm run build
+
+# Test
+npm test
 
 # Run locally
 npm run dev
 ```
 
-## Testing
+---
 
-```bash
-# Run all tests
-npm test
+## Comparison
 
-# Watch mode
-npm run test:watch
+| Feature | This MCP | Sanity Official |
+|---------|----------|-----------------|
+| Self-hosted | ✅ | ❌ (archived) |
+| Simple token auth | ✅ | OAuth only |
+| Works offline | ✅ | ❌ |
+| Reference tracking | ✅ | ❌ |
+| Document diff | ✅ | ❌ |
+| Bulk transactions | ✅ | ❌ |
+| Draft status | ✅ | ❌ |
+| Revision history | ✅ | ❌ |
+| Schema discovery | ✅ | ✅ |
+| Full CRUD | ✅ | ✅ |
+| GROQ queries | ✅ | ✅ |
+| Release management | ❌ | ✅ |
+| Semantic search | ❌ | ✅ |
 
-# With coverage
-npm test -- --coverage
-```
+**tl;dr:** We're better for self-hosting, developer tooling, and content operations. They're better if you need releases and semantic search with embeddings.
+
+---
 
 ## License
 
-MIT © Purple Horizons
+MIT © [Purple Horizons](https://purplehorizons.io)
+
+---
 
 ## Links
 
-- [Sanity GROQ Documentation](https://www.sanity.io/docs/groq)
-- [MCP Protocol Specification](https://modelcontextprotocol.io)
+- [Sanity GROQ Docs](https://www.sanity.io/docs/groq)
+- [MCP Protocol](https://modelcontextprotocol.io)
 - [Purple Horizons](https://purplehorizons.io)
+- [Report Issues](https://github.com/Purple-Horizons/sanity-mcp/issues)

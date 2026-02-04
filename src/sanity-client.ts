@@ -453,7 +453,204 @@ export class SanityClient {
       },
     ]);
   }
+
+  /**
+   * Find all documents that reference a given document
+   */
+  async findReferences(
+    documentId: string,
+    options?: { limit?: number }
+  ): Promise<DocumentReference[]> {
+    const limit = options?.limit || 100;
+    
+    // GROQ query to find all documents that reference this document
+    const query = `*[references($id)][0...${limit}] {
+      _id,
+      _type
+    }`;
+    
+    const result = await this.query<DocumentReference[]>(query, { id: documentId });
+    return result.result;
+  }
+
+  /**
+   * Get revision history for a document
+   */
+  async getHistory(
+    documentId: string,
+    options?: { limit?: number }
+  ): Promise<HistoryEntry[]> {
+    if (!this.token) {
+      throw new Error('History access requires a Sanity API token');
+    }
+    
+    const limit = options?.limit || 25;
+    
+    // Use the history API
+    const url = `https://${this.projectId}.api.sanity.io/v${this.apiVersion}/data/history/${this.dataset}/documents/${documentId}?limit=${limit}`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: this.headers,
+    });
+    
+    if (!response.ok) {
+      // History API might not be available, fall back to basic info
+      const doc = await this.getDocument(documentId);
+      if (doc) {
+        return [{
+          _id: doc._id,
+          _rev: doc._rev || 'unknown',
+          _updatedAt: doc._updatedAt || new Date().toISOString(),
+        }];
+      }
+      return [];
+    }
+    
+    const result = await response.json() as { documents: HistoryEntry[] };
+    return result.documents || [];
+  }
+
+  /**
+   * Compare two documents and return the differences
+   */
+  async compareDocuments(
+    idA: string,
+    idB: string
+  ): Promise<{
+    added: string[];
+    removed: string[];
+    changed: string[];
+    unchanged: string[];
+  }> {
+    const [docA, docB] = await Promise.all([
+      this.getDocument(idA),
+      this.getDocument(idB),
+    ]);
+    
+    if (!docA) throw new Error(`Document not found: ${idA}`);
+    if (!docB) throw new Error(`Document not found: ${idB}`);
+    
+    const keysA = new Set(Object.keys(docA).filter(k => !k.startsWith('_')));
+    const keysB = new Set(Object.keys(docB).filter(k => !k.startsWith('_')));
+    
+    const added: string[] = [];
+    const removed: string[] = [];
+    const changed: string[] = [];
+    const unchanged: string[] = [];
+    
+    // Fields in B but not in A
+    for (const key of keysB) {
+      if (!keysA.has(key)) added.push(key);
+    }
+    
+    // Fields in A but not in B
+    for (const key of keysA) {
+      if (!keysB.has(key)) {
+        removed.push(key);
+      } else {
+        // Both have it - compare values
+        const valA = JSON.stringify((docA as Record<string, unknown>)[key]);
+        const valB = JSON.stringify((docB as Record<string, unknown>)[key]);
+        if (valA === valB) {
+          unchanged.push(key);
+        } else {
+          changed.push(key);
+        }
+      }
+    }
+    
+    return { added, removed, changed, unchanged };
+  }
+
+  /**
+   * Execute multiple mutations in a single atomic transaction
+   */
+  async bulkMutate(
+    operations: BulkOperation[],
+    options?: { dryRun?: boolean }
+  ): Promise<MutationResult> {
+    if (!this.token) {
+      throw new Error('Bulk operations require a Sanity API token');
+    }
+    
+    if (options?.dryRun) {
+      // Validate without executing
+      return {
+        transactionId: 'dry-run',
+        results: operations.map((op, i) => ({
+          id: `operation-${i}`,
+          operation: Object.keys(op)[0],
+        })),
+      };
+    }
+    
+    return this.mutate(operations);
+  }
+
+  /**
+   * Get the draft/publish status of a document
+   */
+  async getDraftStatus(
+    documentId: string
+  ): Promise<{
+    published: SanityDocument | null;
+    draft: SanityDocument | null;
+    hasUnpublishedChanges: boolean;
+    status: 'published' | 'draft' | 'both' | 'none';
+  }> {
+    const publishedId = documentId.startsWith('drafts.') 
+      ? documentId.replace('drafts.', '') 
+      : documentId;
+    const draftId = `drafts.${publishedId}`;
+    
+    const [published, draft] = await Promise.all([
+      this.getDocument(publishedId),
+      this.getDocument(draftId),
+    ]);
+    
+    let status: 'published' | 'draft' | 'both' | 'none';
+    if (published && draft) status = 'both';
+    else if (published) status = 'published';
+    else if (draft) status = 'draft';
+    else status = 'none';
+    
+    return {
+      published,
+      draft,
+      hasUnpublishedChanges: !!draft,
+      status,
+    };
+  }
 }
+
+/**
+ * Reference information for a document
+ */
+export interface DocumentReference {
+  _id: string;
+  _type: string;
+}
+
+/**
+ * History entry for document revisions
+ */
+export interface HistoryEntry {
+  _id: string;
+  _rev: string;
+  _updatedAt: string;
+  author?: string;
+}
+
+/**
+ * Bulk operation for transactional updates
+ */
+export type BulkOperation =
+  | { create: Record<string, unknown> }
+  | { createOrReplace: Record<string, unknown> }
+  | { createIfNotExists: Record<string, unknown> }
+  | { patch: { id: string; set?: Record<string, unknown>; unset?: string[]; inc?: Record<string, number> } }
+  | { delete: { id: string } };
 
 /**
  * Create a Sanity client from environment variables

@@ -148,7 +148,80 @@ export declare class SanityClient {
      * Unpublish a document (move to drafts)
      */
     unpublishDocument(publishedId: string): Promise<MutationResult>;
+    /**
+     * Find all documents that reference a given document
+     */
+    findReferences(documentId: string, options?: {
+        limit?: number;
+    }): Promise<DocumentReference[]>;
+    /**
+     * Get revision history for a document
+     */
+    getHistory(documentId: string, options?: {
+        limit?: number;
+    }): Promise<HistoryEntry[]>;
+    /**
+     * Compare two documents and return the differences
+     */
+    compareDocuments(idA: string, idB: string): Promise<{
+        added: string[];
+        removed: string[];
+        changed: string[];
+        unchanged: string[];
+    }>;
+    /**
+     * Execute multiple mutations in a single atomic transaction
+     */
+    bulkMutate(operations: BulkOperation[], options?: {
+        dryRun?: boolean;
+    }): Promise<MutationResult>;
+    /**
+     * Get the draft/publish status of a document
+     */
+    getDraftStatus(documentId: string): Promise<{
+        published: SanityDocument | null;
+        draft: SanityDocument | null;
+        hasUnpublishedChanges: boolean;
+        status: 'published' | 'draft' | 'both' | 'none';
+    }>;
 }
+/**
+ * Reference information for a document
+ */
+export interface DocumentReference {
+    _id: string;
+    _type: string;
+}
+/**
+ * History entry for document revisions
+ */
+export interface HistoryEntry {
+    _id: string;
+    _rev: string;
+    _updatedAt: string;
+    author?: string;
+}
+/**
+ * Bulk operation for transactional updates
+ */
+export type BulkOperation = {
+    create: Record<string, unknown>;
+} | {
+    createOrReplace: Record<string, unknown>;
+} | {
+    createIfNotExists: Record<string, unknown>;
+} | {
+    patch: {
+        id: string;
+        set?: Record<string, unknown>;
+        unset?: string[];
+        inc?: Record<string, number>;
+    };
+} | {
+    delete: {
+        id: string;
+    };
+};
 /**
  * Create a Sanity client from environment variables
  */
